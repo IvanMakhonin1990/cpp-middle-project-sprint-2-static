@@ -1,18 +1,28 @@
 #pragma once
 
-#include <tuple>
-
-#include "parse.hpp"
 #include "format_string.hpp"
+#include "parse.hpp"
 #include "types.hpp"
+#include <tuple>
 
 namespace stdx {
 
-// Главная функция
-template <details::format_string fmt, details::fixed_string source, typename... Ts>
-consteval details::scan_result<Ts...> scan() { // передайте пакет параметров в scan_result
-// измените реализацию
-    return details::scan_result<Ts...>{42};
-}
+// ============================================================================
+// Главная функция scan
+// ============================================================================
+template <details::fixed_string fmt_str, details::fixed_string src_str, typename... Ts>
+consteval details::scan_result<Ts...> scan() {
+    constexpr auto fmt_info = details::get_number_placeholders<fmt_str>();
+    static_assert(fmt_info.has_value(), "Format string is invalid");
+    static_assert(sizeof...(Ts) == fmt_info.value(), "Mismatch between types and placeholders");
 
-} // namespace stdx
+    if constexpr (sizeof...(Ts) == 0) {
+        return details::scan_result<Ts...>();
+    } else {
+        return [&]<std::size_t... I>(std::index_sequence<I...>) {
+            return details::scan_result<Ts...>(
+                details::parse_input<I, fmt_str, src_str, std::tuple_element_t<I, std::tuple<Ts...>>>()...);
+        }(std::index_sequence_for<Ts...>{});
+    }
+}
+}  // namespace stdx

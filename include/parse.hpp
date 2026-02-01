@@ -1,78 +1,118 @@
 #pragma once
 
 #include <charconv>
-#include <concepts>
-#include <optional>
-#include <system_error>
+#include <cstdint>
+#include <string_view>
 
-#include "format_string.hpp"
 #include "types.hpp"
 
 namespace stdx::details {
 
-// Шаблонная функция, возвращающая пару позиций в строке с исходными данными, соотвествующих I-ому плейсхолдеру
-// Функция закомментирована, так как еще не реализованы классы, которые она использует
-/*
-template<int I, format_string fmt, fixed_string source>
-consteval auto get_current_source_for_parsing() {
-    static_assert(I >= 0 && I < fmt.number_placeholders, "Invalid placeholder index");
+// ============================================================================
+// Парсинг значений конкретных типов
+// ============================================================================
 
-    constexpr auto to_sv = [](const auto& fs) {
-        return std::string_view(fs.data, fs.size() - 1);
-    };
+template <typename T>
+    requires std::is_same_v<T, int8_t> || std::is_same_v<T, int16_t> || std::is_same_v<T, int32_t> ||
+             std::is_same_v<T, int64_t>
+consteval T parse_value(std::string_view str) {
+    T result = 0;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+    static_assert(ec == std::errc(), "Parse error: invalid integer format");
+    return result;
+}
 
-    constexpr auto fmt_sv = to_sv(fmt.fmt);
-    constexpr auto src_sv = to_sv(source);
-    constexpr auto& positions = fmt.placeholder_positions;
+template <typename T>
+    requires std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t> ||
+             std::is_same_v<T, uint64_t>
+consteval T parse_value(std::string_view str) {
+    T result = 0;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+    static_assert(ec == std::errc(), "Parse error: invalid integer format");
+    return result;
+}
 
-    // Получаем границы текущего плейсхолдера в формате
-    constexpr auto pos_i = positions[I];
-    constexpr size_t fmt_start = pos_i.first, fmt_end = pos_i.second;
+template <typename T>
+    requires std::is_same_v<T, std::string_view>
+consteval T parse_value(std::string_view str) {
+    return str;
+}
 
-    // Находим начало в исходной строке
-    constexpr auto src_start = [&]{
-        if constexpr (I == 0) {
-            return fmt_start;
+// ============================================================================
+// Helper: найти позицию N-го плейсхолдера в формате
+// Возвращает пару (start_pos, end_pos) где {%d} или {%s}
+// ============================================================================
+
+consteval std::pair<std::size_t, std::size_t> find_placeholder_at(std::string_view fmt, std::size_t placeholder_index) {
+    std::size_t count = 0;
+    std::size_t i = 0;
+
+    while (i < fmt.size()) {
+        // Ищем открывающую скобку
+        if (fmt[i] == '{' && i + 3 < fmt.size() && fmt[i + 1] == '%') {
+            if (count == placeholder_index) {
+                // Нашли нужный плейсхолдер
+                return {i, i + 4};  // {%d} или {%s} - 4 символа
+            }
+            count++;
+            i += 4;  // Пропускаем {%X}
         } else {
-            // Находим конец предыдущего плейсхолдера в исходной строке
-            constexpr auto prev_bounds = get_current_source_for_parsing<I-1, fmt, source>();
-            const auto prev_end = prev_bounds.second;
-
-            // Получаем разделитель между текущим и предыдущим плейсхолдерами
-            constexpr auto prev_fmt_end = positions[I-1].second;
-            constexpr auto sep = fmt_sv.substr(prev_fmt_end + 1, fmt_start - (prev_fmt_end + 1));
-
-            // Ищем разделитель после предыдущего значения
-            auto pos = src_sv.find(sep, prev_end);
-            return pos != std::string_view::npos ? pos + sep.size() : src_sv.size();
+            i++;
         }
-    }();
-
-    // Находим конец в исходной строке
-    constexpr auto src_end = [&]{
-        // Получаем разделитель после текущего плейсхолдера
-        if constexpr(fmt_end == (fmt_sv.size() - 1)) {
-            return src_sv.size();
-        }
-        constexpr auto sep = fmt_sv.substr(fmt_end + 1,
-            (I < fmt.number_placeholders - 1)
-                ? positions[I+1].first - (fmt_end + 1)
-                : fmt_sv.size() - (fmt_end + 1));
-        // Ищем разделитель после текущего значения
-        constexpr auto pos = src_sv.find(sep, src_start);
-        return pos != std::string_view::npos ? pos : src_sv.size();
-    }();
-    return std::pair{src_start, src_end};
-}
-*/
-
-// Реализуйте семейство функция parse_value
-
-// Шаблонная функция, выполняющая преобразования исходных данных в конкретный тип на основе I-го плейсхолдера
-
-// здесь ваш код
-void parse_input() {  // поменяйте сигнатуру
-    // здесь ваш код
+    }
+    return {fmt.size(), fmt.size()};  // Не найден
 }
 
-} // namespace stdx::details
+// ============================================================================
+// Главная функция парсинга одного плейсхолдера
+// ============================================================================
+
+template <std::size_t I, fixed_string fmt, fixed_string source, typename T>
+consteval T parse_input() {
+    static_assert(ParseableType<T>, "Type T is not supported for parsing. "
+                                    "Supported types: int8_t, int16_t, int32_t, int64_t, "
+                                    "uint8_t, uint16_t, uint32_t, uint64_t, std::string_view");
+
+    auto fmt_sv = std::string_view(fmt.data, fmt.size());
+    auto src_sv = std::string_view(source.data, source.size());
+
+    auto [curr_ph_start, curr_ph_end] = find_placeholder_at(fmt_sv, I);
+    auto [next_ph_start, next_ph_end] = find_placeholder_at(fmt_sv, I + 1);
+
+    auto before_sep = fmt_sv.substr(0, curr_ph_start);
+
+    auto after_start = curr_ph_end;
+    auto after_end = (next_ph_start < fmt_sv.size()) ? next_ph_start : fmt_sv.size();
+    auto after_sep = fmt_sv.substr(after_start, after_end - after_start);
+
+    std::size_t value_start = 0;
+
+    if (I == 0) {
+        value_start = before_sep.size();
+    } else {
+        auto [prev_ph_start, prev_ph_end] = find_placeholder_at(fmt_sv, I - 1);
+        auto between_sep = fmt_sv.substr(prev_ph_end, curr_ph_start - prev_ph_end);
+
+        std::size_t search_pos = 0;
+        for (std::size_t j = 0; j < I; ++j) {
+            auto pos = src_sv.find(between_sep, search_pos);
+            if (pos != std::string_view::npos) {
+                search_pos = pos + between_sep.size();
+            }
+        }
+        value_start = search_pos;
+    }
+
+    std::size_t value_end = src_sv.size();
+    if (after_sep.size() > 0) {
+        auto pos = src_sv.find(after_sep, value_start);
+        if (pos != std::string_view::npos) {
+            value_end = pos;
+        }
+    }
+
+    auto to_parse = src_sv.substr(value_start, value_end - value_start);
+    return parse_value<T>(to_parse);
+}
+
+}  // namespace stdx::details
